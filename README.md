@@ -1,6 +1,6 @@
 # POES — Proof-Oriented Event Sourcing (Experimental)
 
-This project is currently in an experimental stage, written by Claude Code. We do not recommending running this into production.
+This project is currently in an experimental stage, written by Claude Code. We do not recommend running this into production.
 This is also a coding agent first framework and skill. It is intended to be run in Claude Code, or any other coding agent. The proof of work is for the human.
 
 We are looking for feedback on its usefulness and shortfalls. We also welcome pull requests, including those by coding agents.
@@ -103,22 +103,34 @@ POES proves four categories of properties about your event-sourced aggregates:
 
 POES is designed so AI coding agents can verify the code they generate. An agent produces an event-sourced aggregate and runs POES verification in the same step — the result is deterministic and machine-readable. When a future change breaks a previously proven property, the agent gets a minimal counterexample showing exactly what broke.
 
-### Claude Code skill
+### Setting up your coding agent
 
-This repo includes a Claude Code skill at `.claude/skills/poes/SKILL.md`. To use it:
+To get your coding agent (Claude Code, Cursor, Windsurf, etc.) working with POES:
 
-1. Clone this repo (or copy the `.claude/skills/poes/` folder into your project)
-2. Register the skill in your project's `.claude/settings.json`:
+1. **Install the package** in your project:
+   ```bash
+   pip install poes
+   ```
 
-```json
-{
-  "skills": [
-    ".claude/skills/poes/SKILL.md"
-  ]
-}
-```
+2. **Copy the skill into your project** so your agent learns the API:
+   ```bash
+   # From the poes repo (or download from GitHub)
+   mkdir -p .claude/skills/poes
+   curl -o .claude/skills/poes/SKILL.md https://raw.githubusercontent.com/kurrent-io/poes/main/.claude/skills/poes/SKILL.md
+   ```
 
-The skill teaches Claude Code the full POES API so it can write and verify aggregates for you.
+3. **Register the skill** in your project's `.claude/settings.json`:
+   ```json
+   {
+     "skills": [
+       ".claude/skills/poes/SKILL.md"
+     ]
+   }
+   ```
+
+4. **Ask your agent** to verify an aggregate — it will know the full API, templates, and common mistakes.
+
+The skill file (`.claude/skills/poes/SKILL.md`) contains the complete API reference, 6 ready-to-use templates, and a list of common mistakes. Any agent that reads it can write and verify POES aggregates autonomously.
 
 ## API Overview
 

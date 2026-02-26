@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/proof-oriented-event-sourcing/poes"
+Homepage = "https://github.com/kurrent-io/poes"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
