@@ -303,6 +303,23 @@ result = builder.run()
 
 Verify that production data in KurrentDB satisfies all invariants. Requires a KurrentDB client and the same `apply` + `event_from_json` used by the Repository.
 
+**Starting KurrentDB locally:**
+
+```bash
+# docker-compose.yml
+# services:
+#   kurrentdb:
+#     image: kurrentplatform/kurrentdb:latest
+#     ports:
+#       - "2113:2113"
+#     environment:
+#       - KURRENTDB_INSECURE=true
+#       - KURRENTDB_RUN_PROJECTIONS=All
+
+docker compose up -d
+pip install kurrentdbclient
+```
+
 ```python
 from kurrentdbclient import KurrentDBClient
 from poes import Check

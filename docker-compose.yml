@@ -1,0 +1,8 @@
+services:
+  kurrentdb:
+    image: kurrentplatform/kurrentdb:latest
+    ports:
+      - "2113:2113"
+    environment:
+      - KURRENTDB_INSECURE=true
+      - KURRENTDB_RUN_PROJECTIONS=All
