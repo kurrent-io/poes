@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.hypothesis/
+TestResults/
+
+# Packaging
+staging/
+
+# Secrets
+*.key
+.env
