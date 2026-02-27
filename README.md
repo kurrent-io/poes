@@ -1,4 +1,4 @@
-# POES — Proof-Oriented Event Sourcing (Experimental)
+# POES — Introducing an experimental project to shorten the verification gap in AI generated code
 
 This project is currently in an experimental stage, written by Claude Code. We do not recommend running this into production.
 This is also a coding agent first framework and skill. It is intended to be run in Claude Code, or any other coding agent. The proof of work is for the human.
