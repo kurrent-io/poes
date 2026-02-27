@@ -11,6 +11,8 @@ POES is a Python library that verifies event-sourced aggregates using property-b
 
 ## Installation
 
+### 1. Install the package
+
 ```bash
 pip install poes
 ```
@@ -23,7 +25,28 @@ cd poes
 pip install -e .
 ```
 
-### Optional dependencies
+### 2. Install the coding agent skill
+
+Copy the skill into your project so your coding agent (Claude Code, Cursor, Windsurf, etc.) learns the POES API:
+
+```bash
+mkdir -p .claude/skills/poes
+curl -o .claude/skills/poes/SKILL.md https://raw.githubusercontent.com/kurrent-io/poes/main/.claude/skills/poes/SKILL.md
+```
+
+Then register it in your project's `.claude/settings.json`:
+
+```json
+{
+  "skills": [
+    ".claude/skills/poes/SKILL.md"
+  ]
+}
+```
+
+The skill file contains the complete API reference, 6 ready-to-use templates, and common mistakes. Any agent that reads it can write and verify POES aggregates autonomously.
+
+### 3. Optional dependencies
 
 ```bash
 pip install poes[dev]        # pytest for running tests
@@ -103,35 +126,6 @@ POES proves four categories of properties about your event-sourced aggregates:
 
 POES is designed so AI coding agents can verify the code they generate. An agent produces an event-sourced aggregate and runs POES verification in the same step — the result is deterministic and machine-readable. When a future change breaks a previously proven property, the agent gets a minimal counterexample showing exactly what broke.
 
-### Setting up your coding agent
-
-To get your coding agent (Claude Code, Cursor, Windsurf, etc.) working with POES:
-
-1. **Install the package** in your project:
-   ```bash
-   pip install poes
-   ```
-
-2. **Copy the skill into your project** so your agent learns the API:
-   ```bash
-   # From the poes repo (or download from GitHub)
-   mkdir -p .claude/skills/poes
-   curl -o .claude/skills/poes/SKILL.md https://raw.githubusercontent.com/kurrent-io/poes/main/.claude/skills/poes/SKILL.md
-   ```
-
-3. **Register the skill** in your project's `.claude/settings.json`:
-   ```json
-   {
-     "skills": [
-       ".claude/skills/poes/SKILL.md"
-     ]
-   }
-   ```
-
-4. **Ask your agent** to verify an aggregate — it will know the full API, templates, and common mistakes.
-
-The skill file (`.claude/skills/poes/SKILL.md`) contains the complete API reference, 6 ready-to-use templates, and a list of common mistakes. Any agent that reads it can write and verify POES aggregates autonomously.
-
 ## API Overview
 
 ```python
@@ -156,18 +150,18 @@ result = builder.run()                          # Run verification
 builder.generate_proof_of_work(path="proof.md") # Generate proof document
 ```
 
-See the [skill file](.claude/skills/poes/SKILL.md) for full API reference, templates, and common mistakes.
+See the [skill file](https://github.com/kurrent-io/poes/blob/main/.claude/skills/poes/SKILL.md) for full API reference, templates, and common mistakes.
 
 ## Samples
 
 | Sample | Description |
 |--------|-------------|
-| [bank_account.py](samples/bank_account.py) | Deposits, withdrawals, balance bounds |
-| [gambling_wallet.py](samples/gambling_wallet.py) | Casino betting with active bet tracking |
-| [inventory.py](samples/inventory.py) | Warehouse stock with reservations |
-| [order_book.py](samples/order_book.py) | Map-based state using FrozenMap |
-| [gift_card.py](samples/gift_card.py) | Full KurrentDB integration |
-| [hotel_reservation.py](samples/hotel_reservation.py) | State diagram with temporal properties |
+| [bank_account.py](https://github.com/kurrent-io/poes/blob/main/samples/bank_account.py) | Deposits, withdrawals, balance bounds |
+| [gambling_wallet.py](https://github.com/kurrent-io/poes/blob/main/samples/gambling_wallet.py) | Casino betting with active bet tracking |
+| [inventory.py](https://github.com/kurrent-io/poes/blob/main/samples/inventory.py) | Warehouse stock with reservations |
+| [order_book.py](https://github.com/kurrent-io/poes/blob/main/samples/order_book.py) | Map-based state using FrozenMap |
+| [gift_card.py](https://github.com/kurrent-io/poes/blob/main/samples/gift_card.py) | Full KurrentDB integration |
+| [hotel_reservation.py](https://github.com/kurrent-io/poes/blob/main/samples/hotel_reservation.py) | State diagram with temporal properties |
 
 Run a sample:
 
