@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "poes"
-version = "0.3.0"
+version = "0.3.1"
 description = "Proof-Oriented Event Sourcing — verify aggregates using property-based testing and state exploration"
 readme = "README.md"
 requires-python = ">=3.10"
