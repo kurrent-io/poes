@@ -9,6 +9,10 @@ We are looking for feedback on its usefulness and shortfalls. We also welcome pu
 
 POES is a Python library that verifies event-sourced aggregates using property-based testing, exhaustive state exploration, and temporal property checking — no external SMT solvers or model checkers required.
 
+## Quick Usage
+
+"Use https://github.com/kurrent-io/poes/ to build and verify {prompt or spec} and then provide me with a proof-of-work (this is deterministic)".
+
 ## Installation
 
 ### 1. Install the package
