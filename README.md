@@ -3,6 +3,8 @@
 This project is currently in an experimental stage, written by Claude Code. We do not recommend running this into production.
 This is also a coding agent first framework and skill. It is intended to be run in Claude Code, or any other coding agent. The proof of work is for the human.
 
+Philosophy: https://www.kurrent.io/blog/proof-oriented-event-sourcing/
+
 We are looking for feedback on its usefulness and shortfalls. We also welcome pull requests, including those by coding agents.
 
 **Write your domain logic once. Verify it automatically.**
