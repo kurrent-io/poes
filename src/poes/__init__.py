@@ -1,6 +1,6 @@
 """POES — Proof-Oriented Event Sourcing."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.1"
 
 from .check import Check, CheckBuilder, CheckResult
 from .explorer import Transition
