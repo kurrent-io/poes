@@ -149,6 +149,15 @@ export default function (pi: ExtensionAPI) {
   };
 
   const looksLikeAggregate = (src: string): boolean => {
+    // Anything using the POES API is unambiguously in scope — validate it
+    // regardless of coding style (apply-fold vs methods, "event" vocab or not).
+    const poesMarkers =
+      /\bfrom\s+poes\s+import\b|\bimport\s+poes\b|\bCheck\s*\.\s*define\s*\(|\.with_transition\s*\(|\.with_parametric_transition\s*\(|\.with_invariant\s*\(/.test(
+        src,
+      );
+    if (poesMarkers) return true;
+    // Otherwise catch an event-sourced aggregate that has no proof yet, so the
+    // missing-proof case is still flagged before POES is even imported.
     const frozen = /@dataclass\(\s*frozen\s*=\s*True\s*\)/.test(src);
     const fold = /def\s+apply\s*\(/.test(src) || /\breplace\s*\(/.test(src);
     const esMarkers =
@@ -166,6 +175,33 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
+  // A minimal, copyable correct proof. Weak models otherwise fumble the API —
+  // most often by passing event classes into with_transition (POES doesn't want
+  // them: transitions are named strings with guard/apply/ensures over STATE).
+  const EXAMPLE =
+    "Correct shape — copy this structure exactly (transitions are NAMED STRINGS " +
+    "with guard/apply/ensures over state; do NOT pass event classes to with_transition):\n" +
+    "```python\n" +
+    "from dataclasses import dataclass, replace\n" +
+    "import hypothesis.strategies as st\n" +
+    "from poes import Check\n" +
+    "@dataclass(frozen=True)\n" +
+    "class State:\n    count: int = 0\n" +
+    "def verify():\n" +
+    "    return (Check.define('Counter', State)\n" +
+    "        .with_initial(State())\n" +
+    "        .with_field('count', st.integers(0, 100))\n" +
+    "        .with_invariant('Bounded', lambda s: 0 <= s.count <= 100)\n" +
+    "        .with_transition('Increment', guard=lambda s: s.count < 100,\n" +
+    "            apply=lambda s: replace(s, count=s.count + 1),\n" +
+    "            ensures=lambda b, a: a.count == b.count + 1)\n" +
+    "        .with_transition('Reset', guard=lambda s: True,\n" +
+    "            apply=lambda s: replace(s, count=0),\n" +
+    "            ensures=lambda b, a: a.count == 0)\n" +
+    "        .expect_transitions(2)\n" +
+    "        .run())\n" +
+    "```";
+
   /** Forceful repair instructions injected into a failing write's tool result. */
   const repairInstructions = (rel: string, r: ValidationResult, attempt: number): string => {
     const why = r.counterexample || r.reason || "verification failed";
@@ -174,10 +210,11 @@ export default function (pi: ExtensionAPI) {
       "This is not done. Fix it now by editing the file (do not just reply):\n" +
       (r.entrypoint
         ? "  • A proof failed. The reason above tells you what broke — correct the guard, the apply, or the invariant. Do not weaken an invariant unless it is genuinely the wrong rule.\n"
-        : "  • Add `def verify() -> CheckResult`: Check.define(...) with a field per state field, an invariant per rule, a transition per event type (guard + apply + a real ensures), .expect_transitions(N), then `return builder.run()`.\n") +
-      `  • Unsure of the API? Read the POES skill: ${skillPath}\n` +
-      "  • Then write the file again; POES re-checks automatically. You may also call poes_verify to confirm.\n" +
-      `(repair attempt ${attempt}/${MAX_AUTO_FIX_ROUNDS})`
+        : "  • Add `def verify()` that returns builder.run() (see the example below).\n") +
+      "  • Adapt the field strategies, invariants, and one transition per event to your aggregate.\n" +
+      `  • Full API in the POES skill: ${skillPath}\n\n` +
+      EXAMPLE +
+      `\n(repair attempt ${attempt}/${MAX_AUTO_FIX_ROUNDS})`
     );
   };
 
