@@ -1,92 +1,93 @@
-# poes-enforce — pi extension
+# poes-enforce — a pi package
 
 Enforces **Proof-Oriented Event Sourcing** in a [pi](https://pi.dev) coding
 session. It steers the model to write every event-sourced aggregate with a POES
-proof, and it gates the turn: if a generated aggregate isn't proven, the
-extension re-engages the model with the counterexample until it is.
+proof, validates each aggregate the moment it's written, and drives a **repair
+loop** — feeding the counterexample back into the model's own agent loop — until
+the proof passes.
 
-## What it does
+Ships as a self-contained **pi package** bundling four resources:
 
-**Generation.** Registers a `poes_verify` tool whose `promptGuidelines` inject
-the POES contract into the system prompt — frozen state, a `verify() ->
-CheckResult` entrypoint, an invariant per rule, a transition per event type,
-`expect_transitions`, and a proof-of-work document. The model is told to call
-`poes_verify` after writing an aggregate.
+| Resource | File | Role |
+|----------|------|------|
+| Extension | `index.ts` | validate-on-write, repair loop, backstop, commands |
+| Skill | `skills/poes/SKILL.md` | the full POES API reference (`/skill:poes`) |
+| Prompt template | `prompts/poes.md` | the `/poes` workflow command (generate → verify → repair) |
+| Validator | `scripts/poes_validate.py` | deterministic proof runner |
 
-**Validation.** On every `write`/`edit` of a `.py` file, the extension reads the
-file from disk and classifies it. A file is an *aggregate* when it has a
-`@dataclass(frozen=True)` state plus event-sourcing markers (`apply`/`replace`,
-`decide`, events, KurrentDB). When the agent settles, each tracked aggregate is
-run through `scripts/poes_validate.py`:
-
-- **block** (default): a missing or failing proof re-engages the model with the
-  reason/counterexample, up to 3 rounds per user task, then hands back to you.
-- **warn**: failures are surfaced via notifications only.
-- **off**: no validation runs.
-
-The validator is the deterministic core: it imports the module, finds the
-verification entrypoint, runs it, and reports `all_passed` plus proof counts,
-states explored, and any counterexample. Exit 0 iff verified and all proofs
-pass.
-
-## Install it anywhere (standalone)
-
-This extension is self-contained — the whole `poes-enforce/` folder is the
-deliverable. To add POES enforcement to any project:
+## Install
 
 ```bash
-# 1. Drop the folder into the project's pi extensions directory
-mkdir -p .pi/extensions
-cp -r /path/to/poes-enforce .pi/extensions/
-
-# 2. Install the POES library into the interpreter the validator uses
-pip install poes
+pi install -l ./poes-enforce      # project-local (.pi); drop -l for global (~/.pi)
+pip install poes                  # the library the validator imports
 ```
 
-That's it. pi discovers `.pi/extensions/*/index.ts` automatically for a trusted
-project, and enforcement starts in `block` mode. Nothing in the extension
-assumes it lives inside the poes source tree.
+`pi install` records the package in `settings.json` (`packages: [...]`) and pi
+auto-loads its extension, skill, and prompt — no `-e` flags, no manual wiring.
+(Verified against pi 0.74: the packaged `poes_verify` tool loads headlessly with
+no explicit path.) You can also `pi install git:...` / `npm:...` once published.
 
-To load it from some other location instead, point pi `settings.json` at it:
+**Requirement:** the interpreter the validator calls (`python`, or `$POES_PYTHON`)
+must be able to `import poes`. If not, enforcement surfaces `pip install poes`
+rather than failing silently.
 
-```json
-{
-  "extensions": ["/abs/path/to/poes-enforce"]
-}
-```
+## The workflow (`/poes`)
 
-**Requirement:** the interpreter the extension calls (`python` by default, or
-`$POES_PYTHON`) must be able to `import poes`. If it can't, the validator reports
-`pip install poes` and enforcement surfaces a warning rather than failing
-silently.
+`/poes <describe the aggregate>` expands the prompt template in `prompts/poes.md`,
+which pins the model to the exact workflow: design → write with a
+`verify() -> CheckResult` → call `poes_verify` → repair from the counterexample →
+done only when all proofs pass. This is pi's native way to make the harness follow
+a fixed workflow (pi has no separate "flows" feature; a prompt template + the
+enforcement extension is the equivalent).
+
+## How enforcement works
+
+**Generation steering.** The `poes_verify` tool's `promptGuidelines` inject the
+POES contract into the system prompt (frozen state, a `verify()` entrypoint, an
+invariant per rule, a transition per event type, `expect_transitions`,
+proof-of-work), and point the model at the bundled skill.
+
+**Validate-on-write + repair loop.** When the model writes/edits a `.py` file
+that looks like an aggregate (`@dataclass(frozen=True)` + `apply`/`decide`/event
+markers), the `tool_result` hook runs `poes_validate.py` right there and, if the
+proof is missing or failing, **appends the counterexample and repair instructions
+to the write result the model receives**. The model then repairs within its own
+run; each repair write re-enters the check, forming the loop. It is capped per
+file at `POES_MAX_REPAIRS` attempts (default 4), after which it tells the model to
+stop and report the blocker.
+
+> This design was chosen after testing against pi 0.74: `agent_settled` never
+> fires in headless/RPC and `sendMessage(triggerTurn)` doesn't reliably start a
+> turn there, but a `tool_result` handler's returned content **is** awaited and
+> shown to the model — so riding the tool loop is the robust way to enforce.
+
+**Backstop.** `agent_end` fires in every mode; it records the final verdict
+(audit + notification) so an unproven aggregate is never silently accepted.
+
+Modes (`POES_ENFORCE` env or `/poes-enforce`): **block** (default — inject repair
+instructions), **warn** (note only), **off**.
+
+## Commands
+
+- `/poes <spec>` — run the full generate-verify-repair workflow.
+- `/poes-verify [file]` — verify a file (or all tracked aggregates).
+- `/poes-status` — show mode and each tracked aggregate's status.
+- `/poes-enforce [off|warn|block]` — get/set enforcement mode.
+- `/poes-skill` — open the bundled POES API reference.
 
 ## Configuration
 
 | Setting | Where | Default | Meaning |
 |---------|-------|---------|---------|
-| enforcement mode | `POES_ENFORCE` env, or `/poes-enforce` | `block` | `off` \| `warn` \| `block` |
-| Python interpreter | `POES_PYTHON` env | `python` | interpreter used to run the validator |
-
-## Commands
-
-- `/poes-verify [file]` — verify a file, or all tracked aggregates if omitted.
-- `/poes-status` — show the mode and each tracked aggregate's status.
-- `/poes-enforce [off|warn|block]` — get or set enforcement mode for the session.
-- `/poes-skill` — open the POES API reference bundled with this extension.
-
-## Bundled skill
-
-The full POES API reference ships **inside** the extension at
-`skills/poes/SKILL.md` — the extension does not depend on any repo-specific
-`.claude/skills/...` path. pi discovers it as `/skill:poes` (declared in
-`package.json`), the model is pointed at its absolute path in the `poes_verify`
-guidelines, and `/poes-skill` opens it directly. It's a snapshot of the canonical
-skill from the poes repo; refresh it if the POES API changes.
+| enforcement mode | `POES_ENFORCE` / `/poes-enforce` | `block` | `off` \| `warn` \| `block` |
+| repair attempts/file | `POES_MAX_REPAIRS` | `4` | cap on automatic repair rounds |
+| Python interpreter | `POES_PYTHON` | `python` | interpreter for the validator |
+| audit log | `POES_ENFORCE_LOG` | (off) | path to append gate/repair events for CI evidence |
 
 ## The contract the model must satisfy
 
-Full policy: [`references/ENFORCEMENT.md`](references/ENFORCEMENT.md). In short,
-each aggregate file must expose:
+Full policy: [`references/ENFORCEMENT.md`](references/ENFORCEMENT.md). Each
+aggregate file must expose:
 
 ```python
 def verify() -> CheckResult:
@@ -102,22 +103,18 @@ def verify() -> CheckResult:
     return builder.run()          # MUST return the CheckResult
 ```
 
-A module-level `POES_CHECK` builder, or a single module-level `CheckBuilder`,
-also works. `verify()` must **return** the result and must not `sys.exit()`.
+A module-level `POES_CHECK` builder (or a single module-level `CheckBuilder`) also
+works. `verify()` must **return** the result and must not `sys.exit()`.
 
 ## Validator CLI (usable standalone)
 
 ```bash
-python .pi/extensions/poes-enforce/scripts/poes_validate.py <target.py> [--out result.json] [--entrypoint NAME]
+python scripts/poes_validate.py <target.py> [--out result.json] [--entrypoint NAME]
 ```
 
 ## API-version notes
 
-Written against <https://pi.dev/docs/latest/extensions>. Two spots may need a
-tweak if your pi build differs:
-
-- `Type` is imported from `@sinclair/typebox` (bundled with pi). If your build
-  re-exports it (e.g. from `@earendil-works/pi-ai`), change the import.
-- `pi.sendMessage(text, { triggerTurn: true })` drives the block-mode re-engage
-  loop. If its signature differs, the gate falls back to a notification with the
-  same detail. Event/context objects are typed loosely so the rest keeps working.
+Built against pi 0.74 docs + live testing. `Type` is imported from
+`@sinclair/typebox` (bundled with pi); if your build re-exports it elsewhere,
+adjust the import. Event/context objects are typed loosely to survive version
+drift.

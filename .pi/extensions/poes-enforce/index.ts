@@ -25,7 +25,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, isAbsolute } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -59,7 +59,9 @@ interface ValidationResult {
 }
 
 const RESULT_PREFIX = "__POES_RESULT__";
-const MAX_AUTO_FIX_ROUNDS = 3;
+// Max automatic repair rounds per user task before handing back. Configurable
+// via POES_MAX_REPAIRS.
+const MAX_AUTO_FIX_ROUNDS = Number(process.env.POES_MAX_REPAIRS) || 4;
 
 // Tool names that write file content. Matched case-insensitively; also matches
 // any name containing write/edit/patch/create so it survives pi renames.
@@ -104,10 +106,21 @@ export default function (pi: ExtensionAPI) {
   ];
 
   const tracked = new Map<string, Tracked>(); // absolute path -> status
-  let dirty = false; // a tracked file changed since the last gate run
-  let autoFixRounds = 0; // reset on new user input
+  const repairAttempts = new Map<string, number>(); // path -> failed validations (repair-loop cap)
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+  // Optional audit trail: set POES_ENFORCE_LOG to a file path to record every
+  // detection and gate decision (useful for CI evidence and debugging).
+  const auditLog = (msg: string): void => {
+    const path = process.env.POES_ENFORCE_LOG;
+    if (!path) return;
+    try {
+      appendFileSync(path, `[${new Date().toISOString()}] ${msg}\n`);
+    } catch {
+      /* never let logging break enforcement */
+    }
+  };
+
   const isWriteTool = (name: string): boolean => {
     const n = (name || "").toLowerCase();
     return WRITE_TOOL_HINTS.some((h) => n.includes(h));
@@ -144,27 +157,28 @@ export default function (pi: ExtensionAPI) {
     return frozen && fold && esMarkers;
   };
 
-  const hasPoesVerification = (src: string): boolean =>
-    /Check\.define\s*\(/.test(src) && /\.run\s*\(\s*\)/.test(src);
-
-  /** Classify a freshly-written file and update the tracking map. */
-  const classify = (absPath: string): void => {
-    if (!existsSync(absPath)) return;
-    let src = "";
+  const isAggregateFile = (absPath: string): boolean => {
+    if (!existsSync(absPath)) return false;
     try {
-      src = readFileSync(absPath, "utf-8");
+      return looksLikeAggregate(readFileSync(absPath, "utf-8"));
     } catch {
-      return;
+      return false;
     }
-    if (!looksLikeAggregate(src)) return;
+  };
 
-    const status: FileStatus = hasPoesVerification(src) ? "pending" : "missing-proof";
-    const reason =
-      status === "missing-proof"
-        ? "aggregate defined without a POES Check.define(...).run() proof"
-        : null;
-    tracked.set(absPath, { status, reason, lastResult: null });
-    dirty = true;
+  /** Forceful repair instructions injected into a failing write's tool result. */
+  const repairInstructions = (rel: string, r: ValidationResult, attempt: number): string => {
+    const why = r.counterexample || r.reason || "verification failed";
+    return (
+      `⛔ POES enforcement (block): ${rel} is NOT proven — ${why}\n` +
+      "This is not done. Fix it now by editing the file (do not just reply):\n" +
+      (r.entrypoint
+        ? "  • A proof failed. The reason above tells you what broke — correct the guard, the apply, or the invariant. Do not weaken an invariant unless it is genuinely the wrong rule.\n"
+        : "  • Add `def verify() -> CheckResult`: Check.define(...) with a field per state field, an invariant per rule, a transition per event type (guard + apply + a real ensures), .expect_transitions(N), then `return builder.run()`.\n") +
+      `  • Unsure of the API? Read the POES skill: ${skillPath}\n` +
+      "  • Then write the file again; POES re-checks automatically. You may also call poes_verify to confirm.\n" +
+      `(repair attempt ${attempt}/${MAX_AUTO_FIX_ROUNDS})`
+    );
   };
 
   /** Run the Python validator on one file and return the parsed result. */
@@ -306,98 +320,84 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ── Validation: detect writes, then gate on settle ───────────────────────
+  // ── Enforcement: validate on write, drive repair in the model's own loop ──
+  // The reliable mechanism (verified against pi 0.74): `tool_result` fires DURING
+  // the agent run and its returned content is awaited and shown to the model. So
+  // when the model writes an aggregate, we validate it right there and, if the
+  // proof is missing or failing, append the counterexample + repair instructions
+  // to the write result. The model then repairs within the same run — each repair
+  // write re-enters this handler, forming a natural repair loop capped per file.
+  // (Message injection via agent_settled/sendMessage is NOT used: agent_settled
+  // never fires in headless/RPC, and sendMessage(triggerTurn) does not reliably
+  // start a turn there.)
   pi.on("tool_result", async (event: any, ctx: any) => {
     try {
-      if (!isWriteTool(event?.toolName)) return;
+      if (strictness === "off" || !isWriteTool(event?.toolName)) return;
       const cwd = ctx?.cwd ?? process.cwd();
-      const paths = new Set(pyPathsFrom(event?.input, cwd));
-      for (const p of paths) classify(p);
-      if (paths.size > 0) ctx?.ui?.setWidget?.("poes", renderWidget(cwd));
+      const aggr = [...new Set(pyPathsFrom(event?.input, cwd))].filter(isAggregateFile);
+      if (aggr.length === 0) return;
+
+      const notes: string[] = [];
+      for (const abs of aggr) {
+        const rel = relOrAbs(abs, cwd);
+        const result = await runValidator(abs);
+        const status = statusFromResult(result);
+        tracked.set(abs, { status, reason: result.reason ?? null, lastResult: result });
+
+        if (status === "passed") {
+          repairAttempts.delete(abs);
+          notes.push(`✓ POES verified ${rel}: ${result.property_proofs ?? 0} proofs, ${result.states_explored ?? 0} states.`);
+          auditLog(`write ${rel}: PASS`);
+        } else if (status === "error") {
+          notes.push(`⚠ POES could not run for ${rel}: ${result.reason}`);
+          auditLog(`write ${rel}: ENV ERROR (${result.reason})`);
+        } else if (strictness === "warn") {
+          notes.push(`⚠ POES: ${rel} is not proven — ${result.reason || result.counterexample}.`);
+          auditLog(`write ${rel}: FAIL (warn) ${result.reason}`);
+        } else {
+          const attempt = (repairAttempts.get(abs) ?? 0) + 1;
+          repairAttempts.set(abs, attempt);
+          if (attempt > MAX_AUTO_FIX_ROUNDS) {
+            notes.push(
+              `⛔ POES: ${rel} still unproven after ${MAX_AUTO_FIX_ROUNDS} repair attempts ` +
+                `(${result.reason || result.counterexample}). Stop editing it and report the blocker to the user.`,
+            );
+            auditLog(`write ${rel}: FAIL, repair budget exhausted`);
+          } else {
+            notes.push(repairInstructions(rel, result, attempt));
+            auditLog(`write ${rel}: FAIL, repair attempt ${attempt}/${MAX_AUTO_FIX_ROUNDS}`);
+          }
+        }
+      }
+
+      ctx?.ui?.setWidget?.("poes", renderWidget(cwd));
+      if (notes.length === 0) return;
+      // Append our enforcement note to the original write result the model sees.
+      return {
+        content: [
+          ...(Array.isArray(event?.content) ? event.content : []),
+          { type: "text", text: "\n— POES enforcement —\n" + notes.join("\n") },
+        ],
+      };
     } catch {
       /* never break the tool pipeline */
     }
   });
 
-  pi.on("input", async (_event: any, _ctx: any) => {
-    autoFixRounds = 0; // fresh enforcement budget per user task
-    return { action: "continue" };
-  });
-
-  pi.on("agent_settled", async (_event: any, ctx: any) => {
+  // Backstop report: `agent_end` fires in every mode. It can't inject into the
+  // finished run, but it records the final verdict (audit + notify) so an
+  // unproven aggregate is never silently accepted.
+  pi.on("agent_end", async (_e: any, ctx: any) => {
     if (strictness === "off") return;
-    if (!dirty) return;
     const cwd = ctx?.cwd ?? process.cwd();
-
-    // Validate every tracked file that isn't already green (and still exists).
-    const toCheck = [...tracked.entries()].filter(
-      ([p, t]) => t.status !== "passed" && existsSync(p),
+    const unproven = [...tracked.entries()].filter(([p, t]) => t.status !== "passed" && existsSync(p));
+    auditLog(`agent_end: tracked=${tracked.size} unproven=${unproven.length}`);
+    if (unproven.length === 0) return;
+    ctx?.ui?.notify?.(
+      `POES: ${unproven.length} aggregate(s) still unproven: ` +
+        unproven.map(([p]) => relOrAbs(p, cwd)).join(", "),
+      strictness === "block" ? "error" : "warning",
     );
-    if (toCheck.length === 0) {
-      dirty = false;
-      return;
-    }
-
-    const failures: ValidationResult[] = [];
-    let envError = false;
-    for (const [abs] of toCheck) {
-      const result = await runValidator(abs);
-      const status = statusFromResult(result);
-      tracked.set(abs, { status, reason: result.reason ?? null, lastResult: result });
-      if (status === "error") envError = true;
-      else if (status !== "passed") failures.push(result);
-    }
-
-    ctx?.ui?.setWidget?.("poes", renderWidget(cwd));
-    dirty = false;
-
-    if (envError) {
-      ctx?.ui?.notify?.(
-        "POES enforcement could not run the validator (check Python/poes install; set POES_PYTHON).",
-        "warning",
-      );
-    }
-
-    if (failures.length === 0) {
-      if (toCheck.length > 0) {
-        ctx?.ui?.notify?.(`POES: all ${toCheck.length} aggregate(s) verified.`, "info");
-      }
-      return;
-    }
-
-    const detail = failures.map((r) => summarize(r, cwd)).join("\n");
-
-    if (strictness === "warn") {
-      ctx?.ui?.notify?.(`POES: ${failures.length} unproven aggregate(s).`, "warning");
-      return;
-    }
-
-    // block mode — re-engage the model, capped.
-    if (autoFixRounds >= MAX_AUTO_FIX_ROUNDS) {
-      ctx?.ui?.notify?.(
-        `POES: still ${failures.length} unproven aggregate(s) after ${MAX_AUTO_FIX_ROUNDS} rounds. ` +
-          "Stopping auto-fix — resolve manually or run /poes-enforce warn.",
-        "error",
-      );
-      return;
-    }
-
-    autoFixRounds += 1;
-    const message =
-      "POES enforcement gate (block mode): the following event-sourced aggregate(s) are not " +
-      "proven and the task is not complete until they are:\n\n" +
-      detail +
-      "\n\nPer .pi/extensions/poes-enforce/references/ENFORCEMENT.md: fix the aggregate or its " +
-      "proof (add the missing verify() entrypoint, tighten a guard, correct apply, or fix the " +
-      "invariant) and re-verify. Do not weaken an invariant just to pass unless that is the true " +
-      `domain rule. (auto-fix round ${autoFixRounds}/${MAX_AUTO_FIX_ROUNDS})`;
-
-    try {
-      await pi.sendMessage(message, { triggerTurn: true });
-    } catch {
-      // If sendMessage's shape differs in this pi build, at least surface it.
-      ctx?.ui?.notify?.(`POES gate:\n${detail}`, "error");
-    }
   });
 
   // ── Commands ──────────────────────────────────────────────────────────────
