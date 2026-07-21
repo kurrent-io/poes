@@ -1,0 +1,17 @@
+{
+  "name": "poes-enforce",
+  "version": "0.1.0",
+  "description": "Pi package that enforces Proof-Oriented Event Sourcing: steers aggregate generation, validates every aggregate you write, and drives a repair loop until the proof passes.",
+  "keywords": ["pi-package", "poes", "event-sourcing", "verification", "kurrentdb"],
+  "license": "MIT",
+  "homepage": "https://github.com/kurrent-io/poes",
+  "pi": {
+    "extensions": ["./index.ts"],
+    "skills": ["./skills"],
+    "prompts": ["./prompts"],
+    "requires": {
+      "python": ">=3.10",
+      "pip": ["poes>=0.3"]
+    }
+  }
+}
