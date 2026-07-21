@@ -27,7 +27,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, isAbsolute } from "node:path";
+import { join, resolve, isAbsolute, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 
 type Strictness = "off" | "warn" | "block";
@@ -42,6 +42,7 @@ interface Tracked {
 
 interface ValidationResult {
   file: string;
+  kind?: string; // passed|proof_failed|entrypoint_missing|import_error|exception|bad_return|env_error|not_found|crash
   entrypoint: string | null;
   ran: boolean;
   verified: boolean;
@@ -59,9 +60,13 @@ interface ValidationResult {
 }
 
 const RESULT_PREFIX = "__POES_RESULT__";
-// Max automatic repair rounds per user task before handing back. Configurable
-// via POES_MAX_REPAIRS.
-const MAX_AUTO_FIX_ROUNDS = Number(process.env.POES_MAX_REPAIRS) || 4;
+// Max automatic repair rounds per file before handing back. Configurable via
+// POES_MAX_REPAIRS; 0 means "no automatic repairs, only report". Number()||4
+// would wrongly turn 0 into 4 and accept negatives, so parse explicitly.
+const MAX_AUTO_FIX_ROUNDS = ((): number => {
+  const n = Number.parseInt(process.env.POES_MAX_REPAIRS ?? "", 10);
+  return Number.isFinite(n) && n >= 0 ? n : 4;
+})();
 
 // Tool names that write file content. Matched case-insensitively; also matches
 // any name containing write/edit/patch/create so it survives pi renames.
@@ -77,7 +82,10 @@ const PROMPT_GUIDELINES = [
 
 export default function (pi: ExtensionAPI) {
   // ── Configuration & state ────────────────────────────────────────────────
-  let strictness: Strictness = (process.env.POES_ENFORCE as Strictness) || "block";
+  const envMode = (process.env.POES_ENFORCE ?? "").toLowerCase();
+  const validMode = envMode === "off" || envMode === "warn" || envMode === "block";
+  let strictness: Strictness = validMode ? (envMode as Strictness) : "block";
+  const invalidEnvMode = envMode && !validMode ? envMode : null; // warned at session_start
   const pythonCmd = process.env.POES_PYTHON || "python";
 
   // Resolve this extension's own directory without assuming a module system,
@@ -205,12 +213,27 @@ export default function (pi: ExtensionAPI) {
   /** Forceful repair instructions injected into a failing write's tool result. */
   const repairInstructions = (rel: string, r: ValidationResult, attempt: number): string => {
     const why = r.counterexample || r.reason || "verification failed";
+    let step: string;
+    switch (r.kind) {
+      case "import_error":
+      case "exception":
+      case "bad_return":
+        step =
+          `  • Your Python errors before the proof can run: ${r.error || why}. Fix the syntax/import/exception. ` +
+          "Common mistake: do NOT chain `.generate_proof_of_work()` before `.run()` — it returns a string; `verify()` must `return builder.run()`.\n";
+        break;
+      case "proof_failed":
+        step =
+          "  • A proof FAILED. The counterexample above shows what broke — correct the guard, the apply, or the " +
+          "invariant. Do not weaken an invariant unless it is genuinely the wrong rule.\n";
+        break;
+      default: // entrypoint_missing / unknown
+        step = "  • Add `def verify()` that returns builder.run() (see the example below).\n";
+    }
     return (
       `⛔ POES enforcement (block): ${rel} is NOT proven — ${why}\n` +
       "This is not done. Fix it now by editing the file (do not just reply):\n" +
-      (r.entrypoint
-        ? "  • A proof failed. The reason above tells you what broke — correct the guard, the apply, or the invariant. Do not weaken an invariant unless it is genuinely the wrong rule.\n"
-        : "  • Add `def verify()` that returns builder.run() (see the example below).\n") +
+      step +
       "  • Adapt the field strategies, invariants, and one transition per event to your aggregate.\n" +
       `  • Full API in the POES skill: ${skillPath}\n\n` +
       EXAMPLE +
@@ -254,6 +277,7 @@ export default function (pi: ExtensionAPI) {
     if (!raw) {
       return {
         file: absPath,
+        kind: "env_error",
         entrypoint: null,
         ran: false,
         verified: false,
@@ -270,6 +294,7 @@ export default function (pi: ExtensionAPI) {
     } catch (err: any) {
       return {
         file: absPath,
+        kind: "crash",
         entrypoint: null,
         ran: false,
         verified: false,
@@ -281,6 +306,22 @@ export default function (pi: ExtensionAPI) {
   };
 
   const statusFromResult = (r: ValidationResult): FileStatus => {
+    switch (r.kind) {
+      case "passed":
+        return "passed";
+      case "entrypoint_missing":
+        return "missing-proof";
+      case "env_error":
+      case "crash":
+      case "not_found":
+        return "error"; // tooling/environment problem — not the model's to "repair"
+      case "import_error":
+      case "exception":
+      case "bad_return":
+      case "proof_failed":
+        return "failed"; // the model's code is wrong and must be fixed
+    }
+    // Fallback for validator output without `kind`.
     if (r.reason && !r.ran && r.error && /could not run|installed/.test(r.reason)) return "error";
     if (!r.verified) return r.entrypoint ? "failed" : "missing-proof";
     return r.all_passed ? "passed" : "failed";
@@ -288,6 +329,14 @@ export default function (pi: ExtensionAPI) {
 
   const relOrAbs = (p: string, cwd: string): string =>
     p.startsWith(cwd) ? p.slice(cwd.length).replace(/^[\\/]/, "") : p;
+
+  // Auto-enforcement (which imports+executes the file) is confined to the
+  // workspace. Explicit /poes-verify and the poes_verify tool may target any path.
+  const isUnderCwd = (abs: string, cwd: string): boolean => {
+    const base = resolve(cwd);
+    const p = resolve(abs);
+    return p === base || p.startsWith(base + sep);
+  };
 
   const renderWidget = (cwd: string): string[] => {
     if (tracked.size === 0) return [`POES: no aggregates tracked (${strictness})`];
@@ -371,7 +420,10 @@ export default function (pi: ExtensionAPI) {
     try {
       if (strictness === "off" || !isWriteTool(event?.toolName)) return;
       const cwd = ctx?.cwd ?? process.cwd();
-      const aggr = [...new Set(pyPathsFrom(event?.input, cwd))].filter(isAggregateFile);
+      const all = [...new Set(pyPathsFrom(event?.input, cwd))];
+      const outside = all.filter((p) => !isUnderCwd(p, cwd));
+      if (outside.length) auditLog(`skipped ${outside.length} path(s) outside workspace: ${outside.join(", ")}`);
+      const aggr = all.filter((p) => isUnderCwd(p, cwd) && isAggregateFile(p));
       if (aggr.length === 0) return;
 
       const notes: string[] = [];
@@ -528,5 +580,20 @@ export default function (pi: ExtensionAPI) {
     const cwd = ctx?.cwd ?? process.cwd();
     ctx?.ui?.setStatus?.("poes", `POES: ${strictness}`);
     ctx?.ui?.setWidget?.("poes", renderWidget(cwd));
+
+    if (invalidEnvMode) {
+      auditLog(`ignored invalid POES_ENFORCE="${invalidEnvMode}", using "${strictness}"`);
+      ctx?.ui?.notify?.(
+        `POES_ENFORCE="${invalidEnvMode}" is not off|warn|block — using "${strictness}".`,
+        "warning",
+      );
+    }
+    // Diagnose a broken install rather than silently disabling enforcement.
+    for (const [what, p] of [["validator", scriptPath], ["skill", skillPath]] as const) {
+      if (!existsSync(p)) {
+        auditLog(`missing ${what} at ${p}`);
+        ctx?.ui?.notify?.(`POES: bundled ${what} not found at ${p} — enforcement may be degraded.`, "error");
+      }
+    }
   });
 }

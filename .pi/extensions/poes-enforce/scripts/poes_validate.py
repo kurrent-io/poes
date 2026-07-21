@@ -134,9 +134,24 @@ def _pick_entrypoint(module, explicit: str | None):
     ), None
 
 
+def _prepare_import_path(target: Path) -> None:
+    """Put the target's directory (and its project root / src) on sys.path so
+    aggregates that import sibling or package-relative modules validate."""
+    for p in (
+        str(target.resolve().parent),
+        *([str(r), str(r / "src")] if (r := _find_repo_root(target.resolve())) else []),
+    ):
+        if p and Path(p).exists() and p not in sys.path:
+            sys.path.insert(0, p)
+
+
 def _blank_result(target: Path) -> dict:
     return {
         "file": str(target),
+        # kind classifies the outcome so the caller need not parse `reason`:
+        # passed | proof_failed | entrypoint_missing | import_error | exception
+        # | bad_return | env_error | not_found | crash | unknown
+        "kind": "unknown",
         "entrypoint": None,
         "ran": False,
         "verified": False,
@@ -158,13 +173,17 @@ def validate(target: Path, entrypoint: str | None) -> dict:
     result = _blank_result(target)
 
     if not target.exists():
+        result["kind"] = "not_found"
         result["reason"] = f"file not found: {target}"
         return result
 
     if not _ensure_poes_importable(target):
+        result["kind"] = "env_error"
         result["reason"] = "the 'poes' package is not installed — run: pip install poes"
         result["error"] = "ModuleNotFoundError: No module named 'poes'"
         return result
+
+    _prepare_import_path(target)
 
     # Import — capture the module's own stdout so POES banners don't pollute ours.
     captured = io.StringIO()
@@ -172,12 +191,14 @@ def validate(target: Path, entrypoint: str | None) -> dict:
         with redirect_stdout(captured):
             module = _import_module(target)
     except Exception as exc:  # noqa: BLE001
+        result["kind"] = "import_error"
         result["error"] = f"import failed: {exc}"
         result["reason"] = "module could not be imported"
         return result
 
     label, fn = _pick_entrypoint(module, entrypoint)
     if fn is None:
+        result["kind"] = "entrypoint_missing"
         result["reason"] = label
         return result
 
@@ -187,10 +208,12 @@ def validate(target: Path, entrypoint: str | None) -> dict:
         with redirect_stdout(captured):
             check_result = fn()
     except SystemExit as exc:
+        result["kind"] = "exception"
         result["error"] = f"entrypoint called sys.exit({exc.code})"
         result["reason"] = "verify() must not exit the process; return a CheckResult"
         return result
     except Exception as exc:  # noqa: BLE001
+        result["kind"] = "exception"
         result["error"] = f"{type(exc).__name__}: {exc}"
         result["reason"] = "verification entrypoint raised an exception"
         return result
@@ -198,6 +221,7 @@ def validate(target: Path, entrypoint: str | None) -> dict:
     result["ran"] = True
 
     if not _is_check_result(check_result):
+        result["kind"] = "bad_return"
         result["reason"] = (
             f"entrypoint '{label}' returned {type(check_result).__name__}, not a CheckResult; "
             "return builder.run()"
@@ -219,6 +243,7 @@ def validate(target: Path, entrypoint: str | None) -> dict:
         if hasattr(check_result, attr):
             result[attr] = getattr(check_result, attr)
 
+    result["kind"] = "passed" if result["all_passed"] else "proof_failed"
     if not result["all_passed"]:
         result["reason"] = result["counterexample"] or "one or more POES proofs failed"
 
@@ -237,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         result = validate(target, args.entrypoint)
     except Exception as exc:  # noqa: BLE001 — never crash the runner
         result = _blank_result(target)
+        result["kind"] = "crash"
         result["error"] = f"unexpected: {exc}\n{traceback.format_exc()}"
         result["reason"] = "validator crashed"
 

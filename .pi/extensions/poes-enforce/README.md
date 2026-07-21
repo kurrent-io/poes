@@ -91,7 +91,7 @@ instructions), **warn** (note only), **off**.
 | Setting | Where | Default | Meaning |
 |---------|-------|---------|---------|
 | enforcement mode | `POES_ENFORCE` / `/poes-enforce` | `block` | `off` \| `warn` \| `block` |
-| repair attempts/file | `POES_MAX_REPAIRS` | `4` | cap on automatic repair rounds |
+| repair attempts/file | `POES_MAX_REPAIRS` | `4` | cap on automatic repair rounds (`0` = report only, no auto-repair) |
 | Python interpreter | `POES_PYTHON` | `python` | interpreter for the validator |
 | audit log | `POES_ENFORCE_LOG` | (off) | path to append gate/repair events for CI evidence |
 
