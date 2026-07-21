@@ -17,15 +17,26 @@ Ships as a self-contained **pi package** bundling four resources:
 
 ## Install
 
+Straight from the repo (a root `package.json` manifest points pi at this
+package, which lives under `.pi/extensions/poes-enforce/`):
+
 ```bash
-pi install -l ./poes-enforce      # project-local (.pi); drop -l for global (~/.pi)
-pip install poes                  # the library the validator imports
+pi install git:github.com/kurrent-io/poes        # or https://github.com/kurrent-io/poes
+pip install poes                                 # the library the validator imports
+```
+
+Add `@<branch-or-tag>` to pin a ref, and `-l` to install project-locally
+(`.pi/`) instead of globally (`~/.pi`). From a local checkout you can also point
+at the package directory directly:
+
+```bash
+pi install -l ./.pi/extensions/poes-enforce
 ```
 
 `pi install` records the package in `settings.json` (`packages: [...]`) and pi
 auto-loads its extension, skill, and prompt — no `-e` flags, no manual wiring.
 (Verified against pi 0.74: the packaged `poes_verify` tool loads headlessly with
-no explicit path.) You can also `pi install git:...` / `npm:...` once published.
+no explicit path, both from the package dir and via the repo-root manifest.)
 
 **Requirement:** the interpreter the validator calls (`python`, or `$POES_PYTHON`)
 must be able to `import poes`. If not, enforcement surfaces `pip install poes`
