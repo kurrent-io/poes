@@ -29,14 +29,14 @@ silently ships unproven.
 ### Install
 
 ```bash
-pi install git:github.com/kurrent-io/poes@pi-poes-enforce   # or https://github.com/kurrent-io/poes
-pip install poes                                            # the library the validator runs
+pi install git:github.com/kurrent-io/poes   # or https://github.com/kurrent-io/poes
+pip install poes                            # the library the validator runs
 ```
 
 `pi install` records the package in `settings.json` and auto-loads its three resources — the
 enforcement **extension**, the bundled POES **skill** (`/skill:poes`), and the `/poes` **workflow
-command**. Drop the `@ref` once this lands on the default branch; add `-l` to install into the
-project (`.pi/`) instead of globally.
+command**. Add `-l` to install into the project (`.pi/`) instead of globally, or `@<tag>` to pin a
+released version.
 
 ### Use it
 
