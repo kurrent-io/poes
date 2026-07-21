@@ -1,0 +1,17 @@
+{
+  "name": "poes-enforce",
+  "version": "0.1.0",
+  "description": "Pi extension that enforces Proof-Oriented Event Sourcing on code generation and validation.",
+  "keywords": ["pi", "pi-extension", "poes", "event-sourcing", "verification", "kurrentdb"],
+  "license": "MIT",
+  "main": "index.ts",
+  "homepage": "https://github.com/kurrent-io/poes",
+  "pi": {
+    "extension": "index.ts",
+    "skills": ["skills"],
+    "requires": {
+      "python": ">=3.10",
+      "pip": ["poes>=0.3"]
+    }
+  }
+}

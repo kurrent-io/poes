@@ -29,24 +29,36 @@ verification entrypoint, runs it, and reports `all_passed` plus proof counts,
 states explored, and any counterexample. Exit 0 iff verified and all proofs
 pass.
 
-## Enable it
+## Install it anywhere (standalone)
 
-This extension lives in `.pi/extensions/poes-enforce/`, which pi discovers
-automatically for a trusted project (`.pi/extensions/*/index.ts`). Nothing else
-is required. To load it from elsewhere, add the path to pi `settings.json`:
+This extension is self-contained — the whole `poes-enforce/` folder is the
+deliverable. To add POES enforcement to any project:
+
+```bash
+# 1. Drop the folder into the project's pi extensions directory
+mkdir -p .pi/extensions
+cp -r /path/to/poes-enforce .pi/extensions/
+
+# 2. Install the POES library into the interpreter the validator uses
+pip install poes
+```
+
+That's it. pi discovers `.pi/extensions/*/index.ts` automatically for a trusted
+project, and enforcement starts in `block` mode. Nothing in the extension
+assumes it lives inside the poes source tree.
+
+To load it from some other location instead, point pi `settings.json` at it:
 
 ```json
 {
-  "extensions": [".pi/extensions/poes-enforce"]
+  "extensions": ["/abs/path/to/poes-enforce"]
 }
 ```
 
-Requires the `poes` package importable by the interpreter the extension calls
-(it falls back to `<repo>/src` if `poes` isn't installed):
-
-```bash
-pip install -e ".[dev]"
-```
+**Requirement:** the interpreter the extension calls (`python` by default, or
+`$POES_PYTHON`) must be able to `import poes`. If it can't, the validator reports
+`pip install poes` and enforcement surfaces a warning rather than failing
+silently.
 
 ## Configuration
 
@@ -60,6 +72,16 @@ pip install -e ".[dev]"
 - `/poes-verify [file]` — verify a file, or all tracked aggregates if omitted.
 - `/poes-status` — show the mode and each tracked aggregate's status.
 - `/poes-enforce [off|warn|block]` — get or set enforcement mode for the session.
+- `/poes-skill` — open the POES API reference bundled with this extension.
+
+## Bundled skill
+
+The full POES API reference ships **inside** the extension at
+`skills/poes/SKILL.md` — the extension does not depend on any repo-specific
+`.claude/skills/...` path. pi discovers it as `/skill:poes` (declared in
+`package.json`), the model is pointed at its absolute path in the `poes_verify`
+guidelines, and `/poes-skill` opens it directly. It's a snapshot of the canonical
+skill from the poes repo; refresh it if the POES API changes.
 
 ## The contract the model must satisfy
 

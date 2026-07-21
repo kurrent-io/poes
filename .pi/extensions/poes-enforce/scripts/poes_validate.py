@@ -46,18 +46,29 @@ def _find_repo_root(start: Path) -> Path | None:
     return None
 
 
-def _ensure_poes_importable(target: Path) -> None:
-    """Make the ``poes`` package importable, preferring an installed copy."""
+def _ensure_poes_importable(target: Path) -> bool:
+    """Make the ``poes`` package importable, preferring an installed copy.
+
+    Returns True if ``poes`` can be imported after best-effort path setup. A
+    standalone install (extension dropped into an arbitrary project) relies on
+    ``pip install poes``; the repo-``src`` fallback only helps when running from
+    inside the poes source tree.
+    """
     try:
         import poes  # noqa: F401
-        return
+        return True
     except ImportError:
         pass
     root = _find_repo_root(target.resolve())
     if root is not None:
         src = root / "src"
-        if src.exists():
+        if src.exists() and str(src) not in sys.path:
             sys.path.insert(0, str(src))
+    try:
+        import poes  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def _import_module(target: Path):
@@ -150,7 +161,10 @@ def validate(target: Path, entrypoint: str | None) -> dict:
         result["reason"] = f"file not found: {target}"
         return result
 
-    _ensure_poes_importable(target)
+    if not _ensure_poes_importable(target):
+        result["reason"] = "the 'poes' package is not installed — run: pip install poes"
+        result["error"] = "ModuleNotFoundError: No module named 'poes'"
+        return result
 
     # Import — capture the module's own stdout so POES banners don't pollute ours.
     captured = io.StringIO()

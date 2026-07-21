@@ -39,9 +39,10 @@ its POES proof:
 4. **Emit a proof-of-work** — call `.generate_proof_of_work(path=...)` before
    `.run()` so the change ships with a human-auditable proof document.
 
-5. **Read the API first** — `.claude/skills/poes/SKILL.md` (and the pi skill, if
-   installed) is the authoritative reference: builder methods, six templates,
-   and common mistakes. Consult it rather than guessing.
+5. **Read the API first** — the POES skill is the authoritative reference
+   (builder methods, six templates, common mistakes). It is bundled with this
+   extension at `skills/poes/SKILL.md` (also `/skill:poes` and `/poes-skill`).
+   Consult it rather than guessing.
 
 ## Validation rules (the gate)
 

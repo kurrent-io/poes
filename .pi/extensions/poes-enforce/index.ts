@@ -71,7 +71,6 @@ const PROMPT_GUIDELINES = [
   "Expose `def verify() -> CheckResult` that builds Check.define(...) and returns builder.run() — never sys.exit().",
   "Cover every field with with_field/with_map_field, every rule with with_invariant, and every event type with a transition that has a guard, an apply, and a non-trivial ensures.",
   "Add .expect_transitions(N) matching the event-type count, and call .generate_proof_of_work(path=...) before .run().",
-  "Read .claude/skills/poes/SKILL.md for the full API. After writing an aggregate, call poes_verify (the poes-enforce extension will also gate on it automatically).",
 ];
 
 export default function (pi: ExtensionAPI) {
@@ -79,21 +78,30 @@ export default function (pi: ExtensionAPI) {
   let strictness: Strictness = (process.env.POES_ENFORCE as Strictness) || "block";
   const pythonCmd = process.env.POES_PYTHON || "python";
 
-  // Locate the validator without assuming a particular module system. Prefer an
-  // explicit override, then this module's directory (if the runtime provides
-  // __dirname), then the conventional project-local path.
-  const resolveScript = (): string => {
-    if (process.env.POES_VALIDATOR) return process.env.POES_VALIDATOR;
+  // Resolve this extension's own directory without assuming a module system,
+  // so the bundled validator and skill are found wherever the folder is dropped.
+  const resolveExtDir = (): string => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const dir = (globalThis as any).__dirname ?? __dirname;
-      if (dir) return join(dir, "scripts", "poes_validate.py");
+      const dir = (globalThis as any).__dirname ?? (typeof __dirname !== "undefined" ? __dirname : "");
+      if (dir) return dir;
     } catch {
       /* __dirname not defined in this runtime */
     }
-    return resolve(process.cwd(), ".pi/extensions/poes-enforce/scripts/poes_validate.py");
+    return resolve(process.cwd(), ".pi/extensions/poes-enforce");
   };
-  const scriptPath = resolveScript();
+  const extDir = resolveExtDir();
+  const scriptPath = process.env.POES_VALIDATOR || join(extDir, "scripts", "poes_validate.py");
+  const skillPath = join(extDir, "skills", "poes", "SKILL.md");
+
+  // The POES API reference ships inside this extension, so the guidance points
+  // at the bundled copy (not a repo-specific .claude path).
+  const guidelines = [
+    ...PROMPT_GUIDELINES,
+    `Consult the POES skill for the full API before writing an aggregate: read ${skillPath} ` +
+      "(bundled with this extension) or run /skill:poes / /poes-skill. After writing an aggregate, " +
+      "call poes_verify — the poes-enforce gate also runs it automatically.",
+  ];
 
   const tracked = new Map<string, Tracked>(); // absolute path -> status
   let dirty = false; // a tracked file changed since the last gate run
@@ -265,7 +273,7 @@ export default function (pi: ExtensionAPI) {
       "whether all proofs passed, plus counts and any counterexample.",
     promptSnippet:
       "poes_verify: prove an event-sourced aggregate with POES before considering the task done.",
-    promptGuidelines: PROMPT_GUIDELINES,
+    promptGuidelines: guidelines,
     parameters: Type.Object({
       file: Type.String({
         description: "Path to the .py file defining the aggregate and its verify() entrypoint.",
@@ -420,6 +428,25 @@ export default function (pi: ExtensionAPI) {
         .filter((p) => p.includes(prefix))
         .map((p) => ({ value: p, label: p }));
       return items.length ? items : null;
+    },
+  });
+
+  pi.registerCommand("poes-skill", {
+    description: "Show the POES API reference bundled with this extension.",
+    handler: async (_args: string, ctx: any) => {
+      if (!existsSync(skillPath)) {
+        ctx?.ui?.notify?.(`Bundled POES skill not found at ${skillPath}`, "error");
+        return;
+      }
+      const content = readFileSync(skillPath, "utf-8");
+      if (ctx?.ui?.editor) {
+        await ctx.ui.editor("POES skill", { content });
+      } else {
+        ctx?.ui?.notify?.(
+          `POES skill is bundled at:\n${skillPath}\nOpen it, or run /skill:poes.`,
+          "info",
+        );
+      }
     },
   });
 
