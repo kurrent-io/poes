@@ -8,11 +8,14 @@
  *      `verify() -> CheckResult` entrypoint (invariants, transitions, temporal
  *      properties, proof-of-work).
  *
- *   2. Validation — whenever the model writes/edits a `.py` file that looks like
- *      an aggregate, the file is tracked. When the agent settles, the extension
- *      runs `scripts/poes_validate.py` on each tracked file. In `block` mode a
- *      failing or missing proof re-engages the model with the counterexample
- *      until it passes (capped, so the user is never trapped).
+ *   2. Validation — when the model writes/edits a `.py` file (under the
+ *      workspace) that uses the POES API or looks like an aggregate, the
+ *      `tool_result` handler runs `scripts/poes_validate.py` immediately and, in
+ *      `block` mode, appends the counterexample + repair instructions to the
+ *      write result the model receives. The model then repairs within its own
+ *      agent loop; each repair write re-validates, capped per file so the user is
+ *      never trapped. `agent_end` is a final backstop that reports any aggregate
+ *      still unproven. (Test files are excluded from enforcement.)
  *
  * The full policy lives in `references/ENFORCEMENT.md`.
  *
@@ -174,13 +177,28 @@ export default function (pi: ExtensionAPI) {
     return frozen && fold && esMarkers;
   };
 
+  // Test modules use the POES API (from poes import Check, Check.define(...))
+  // inside test functions, not a module-level verify(). They are not aggregates —
+  // enforcing a verify() into them would be wrong and would fight edits to tests.
+  const looksLikeTest = (absPath: string, src: string): boolean => {
+    const posix = absPath.replace(/\\/g, "/");
+    const base = posix.split("/").pop() || "";
+    const nameHit = /^test_.*\.py$|_test\.py$|^conftest\.py$/.test(base);
+    const pathHit = /(^|\/)tests?\//.test(posix);
+    const contentHit = /\bimport\s+pytest\b|(^|\n)\s*def\s+test_/.test(src);
+    return nameHit || pathHit || contentHit;
+  };
+
   const isAggregateFile = (absPath: string): boolean => {
     if (!existsSync(absPath)) return false;
+    let src: string;
     try {
-      return looksLikeAggregate(readFileSync(absPath, "utf-8"));
+      src = readFileSync(absPath, "utf-8");
     } catch {
       return false;
     }
+    if (looksLikeTest(absPath, src)) return false;
+    return looksLikeAggregate(src);
   };
 
   // A minimal, copyable correct proof. Weak models otherwise fumble the API —
